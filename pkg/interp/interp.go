@@ -24,6 +24,22 @@ func NewInterpreter() *Interpreter {
 	}
 }
 
+// GetVar retrieves a variable value
+func (i *Interpreter) GetVar(name string) (Value, bool) {
+	if val, ok := i.Vars[name]; ok {
+		return val, true
+	}
+	if val, ok := i.Global[name]; ok {
+		return val, true
+	}
+	return nil, false
+}
+
+// SetVar sets a variable value
+func (i *Interpreter) SetVar(name string, value Value) {
+	i.Vars[name] = value
+}
+
 // ExecuteCase executes a single switch case block (string of JS code)
 // Example: `var tP=+ ! ![]; var nq=tP+tP;` (from case Dl)
 func (i *Interpreter) ExecuteCase(codeBlock string) error {
@@ -42,7 +58,15 @@ func (i *Interpreter) execute() error {
 			continue
 		}
 		
-		// Try to parse and execute as assignment
+		// Check if this is a loop (must be before executeStatement)
+		if strings.HasPrefix(stmt, "while") || strings.HasPrefix(stmt, "do") || strings.HasPrefix(stmt, "for") {
+			if err := i.handleLoop(stmt); err != nil {
+				return fmt.Errorf("loop failed: %w", err)
+			}
+			continue
+		}
+		
+		// Try to parse and execute as regular statement
 		if err := i.executeStatement(stmt); err != nil {
 			return fmt.Errorf("failed to execute '%s': %w", stmt, err)
 		}
@@ -72,7 +96,7 @@ func (i *Interpreter) executeStatement(stmt string) error {
 	
 	// Handle switch (simplified)
 	if strings.Contains(stmt, "switch") {
-		return i.handleSwitch(stmt)
+		return i.handleSwitchStmt(stmt)
 	}
 	
 	return nil // ignore unknown statements for now
@@ -118,14 +142,9 @@ func (i *Interpreter) handleAssignment(stmt string) error {
 	return nil
 }
 
-// handleLoop handles while/do-while (stub for now)
-func (i *Interpreter) handleLoop(stmt string) error {
-	// TODO: implement loop execution
-	return nil
-}
 
 // handleSwitch handles switch statements (stub for now)
-func (i *Interpreter) handleSwitch(stmt string) error {
+func (i *Interpreter) handleSwitchStmt(stmt string) error {
 	// TODO: implement switch execution
 	return nil
 }
@@ -242,12 +261,3 @@ func mustParseInt(s string) int64 {
 }
 
 // GetVar retrieves a variable value
-func (i *Interpreter) GetVar(name string) (Value, bool) {
-	val, ok := i.Vars[name]
-	return val, ok
-}
-
-// GetAllVars returns all variables
-func (i *Interpreter) GetAllVars() map[string]Value {
-	return i.Vars
-}
