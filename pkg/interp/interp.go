@@ -49,15 +49,14 @@ func (i *Interpreter) ExecuteCase(codeBlock string) error {
 
 // execute runs the code block
 func (i *Interpreter) execute() error {
-	// Split by semicolons to get statements
-	statements := strings.Split(i.Code, ";")
-	
+	statements := i.splitStatements(i.Code)
+
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
 		}
-		
+
 		// Check if this is a loop (must be before executeStatement)
 		if strings.HasPrefix(stmt, "while") || strings.HasPrefix(stmt, "do") || strings.HasPrefix(stmt, "for") {
 			if err := i.handleLoop(stmt); err != nil {
@@ -65,14 +64,39 @@ func (i *Interpreter) execute() error {
 			}
 			continue
 		}
-		
+
 		// Try to parse and execute as regular statement
 		if err := i.executeStatement(stmt); err != nil {
 			return fmt.Errorf("failed to execute '%s': %w", stmt, err)
 		}
 	}
-	
+
 	return nil
+}
+
+// splitStatements splits code by ';' but respects brace/paren nesting,
+// so "while(x) { a; b; }" stays one statement instead of being cut at inner ';'
+func (i *Interpreter) splitStatements(code string) []string {
+	var stmts []string
+	depth := 0
+	start := 0
+	for idx, ch := range code {
+		switch ch {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			depth--
+		case ';':
+			if depth == 0 {
+				stmts = append(stmts, code[start:idx])
+				start = idx + 1
+			}
+		}
+	}
+	if start < len(code) {
+		stmts = append(stmts, code[start:])
+	}
+	return stmts
 }
 
 // executeStatement handles a single statement
@@ -150,10 +174,15 @@ func (i *Interpreter) handleSwitchStmt(stmt string) error {
 }
 
 // evalExpr evaluates a simple expression and returns its value
-// Handles: literals, variable refs, arithmetic (+, -, *, /, %), JSFuck (!, +[], etc.)
+// Handles: literals, variable refs, arithmetic (+, -, *, /, %), JSFuck (!, +[], etc.), comparisons
 func (i *Interpreter) evalExpr(exprStr string) (Value, error) {
 	exprStr = strings.TrimSpace(exprStr)
-	
+
+	// Try comparison operators first (lowest precedence): <=, >=, ==, !=, <, >
+	if val, ok, err := i.evalComparison(exprStr); ok {
+		return val, err
+	}
+
 	// Try to evaluate JSFuck-style literals first
 	if val, ok := i.evalJSFuck(exprStr); ok {
 		return val, nil
