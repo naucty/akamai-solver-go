@@ -73,7 +73,8 @@ func (s *Scope) Declare(name string, val Value) {
 
 // Interpreter holds the global scope and native builtins
 type Interpreter struct {
-	Global *Scope
+	Global    *Scope
+	CallDepth int
 }
 
 func NewInterpreter() *Interpreter {

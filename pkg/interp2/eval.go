@@ -475,6 +475,18 @@ func (interp *Interpreter) evalCall(e *ast.CallExpression, scope *Scope) (Value,
 }
 
 func (interp *Interpreter) callFunction(fnVal Value, thisVal Value, args []Value) (Value, error) {
+	interp.CallDepth++
+	if interp.CallDepth > 2000000 {
+		name := "?"
+		if fn, ok := fnVal.(*Function); ok {
+			name = fn.Name
+		}
+		interp.CallDepth--
+		return nil, fmt.Errorf("MAX CALL DEPTH exceeded, last fn=%q this=%T args=%#v", name, thisVal, args)
+	}
+	// Debug trace disabled (infinite trampoline is normal)
+	
+	defer func() { interp.CallDepth-- }()
 	switch fn := fnVal.(type) {
 	case *Function:
 		callScope := NewScope(fn.Closure)
