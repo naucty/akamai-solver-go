@@ -125,6 +125,15 @@ func (interp *Interpreter) evalExpr(expr ast.Expression, scope *Scope) (Value, e
 	case *ast.FunctionLiteral:
 		return interp.makeFunction(e, scope), nil
 
+	case *ast.NewExpression:
+		return interp.evalNew(e, scope)
+
+	case *ast.ThisExpression:
+		if v, ok := scope.Get("this"); ok {
+			return v, nil
+		}
+		return nil, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -150,18 +159,6 @@ func (interp *Interpreter) propKeyName(key ast.Expression, scope *Scope) string 
 
 func (interp *Interpreter) getMember(container Value, key string) (Value, error) {
 	switch c := container.(type) {
-	case []Value:
-		if key == "length" {
-			return float64(len(c)), nil
-		}
-		idx, err := strconv.Atoi(key)
-		if err != nil {
-			return nil, nil
-		}
-		if idx < 0 || idx >= len(c) {
-			return nil, nil
-		}
-		return c[idx], nil
 	case string:
 		if key == "length" {
 			return float64(len(c)), nil
@@ -179,6 +176,22 @@ func (interp *Interpreter) getMember(container Value, key string) (Value, error)
 			return v, nil
 		}
 		return nil, nil
+	case *Function:
+		return nativeFunctionMethod(interp, c, key)
+	case NativeFunc:
+		return nativeFunctionMethod(interp, c, key)
+	case []Value:
+		if key == "length" {
+			return float64(len(c)), nil
+		}
+		idx, err := strconv.Atoi(key)
+		if err != nil {
+			return nativeArrayMethod(interp, c, key)
+		}
+		if idx < 0 || idx >= len(c) {
+			return nil, nil
+		}
+		return c[idx], nil
 	case nil:
 		return nil, fmt.Errorf("cannot read property '%s' of null/undefined", key)
 	}
@@ -447,7 +460,18 @@ func (interp *Interpreter) evalCall(e *ast.CallExpression, scope *Scope) (Value,
 		}
 	}
 
-	return interp.callFunction(fnVal, thisVal, args)
+	res, cerr := interp.callFunction(fnVal, thisVal, args)
+	if cerr != nil {
+		switch c := e.Callee.(type) {
+		case *ast.Identifier:
+			return nil, fmt.Errorf("calling %s(): %w", c.Name.String(), cerr)
+		case *ast.DotExpression:
+			return nil, fmt.Errorf("calling .%s(): %w", c.Identifier.Name.String(), cerr)
+		case *ast.BracketExpression:
+			return nil, fmt.Errorf("calling [computed](): %w", cerr)
+		}
+	}
+	return res, cerr
 }
 
 func (interp *Interpreter) callFunction(fnVal Value, thisVal Value, args []Value) (Value, error) {
@@ -478,6 +502,13 @@ func (interp *Interpreter) callFunction(fnVal Value, thisVal Value, args []Value
 		return nil, nil
 	case NativeFunc:
 		return fn(args)
+	case ConstructorFunc:
+		return fn(args)
+	case *Object:
+		if fn.Call != nil {
+			return fn.Call(args)
+		}
+		return nil, fmt.Errorf("object is not callable")
 	default:
 		return nil, fmt.Errorf("attempt to call non-function value: %T", fnVal)
 	}

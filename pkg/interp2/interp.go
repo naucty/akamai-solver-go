@@ -16,9 +16,12 @@ import (
 // Value is any runtime value: float64, string, bool, nil, []Value, *Object, or *Function
 type Value interface{}
 
-// Object is a simple JS-like object (property map)
+// Object is a simple JS-like object (property map). If Call is set, the
+// object is also callable (used for constructor-like builtins that also
+// carry static properties, e.g. Array.isArray, String.fromCharCode).
 type Object struct {
 	Props map[string]Value
+	Call  func(args []Value) (Value, error)
 }
 
 // Function represents a user-defined JS function (closure)
@@ -96,6 +99,23 @@ func (interp *Interpreter) ParseAndRun(code string) (*Scope, error) {
 	return scope, nil
 }
 
+// ParseAndRunDebug executes top-level statements one at a time and reports
+// which statement index/type failed, for diagnosing large scripts.
+func (interp *Interpreter) ParseAndRunDebug(code string) (*Scope, error) {
+	prog, err := parser.ParseFile(nil, "fragment.js", code, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse error: %w", err)
+	}
+	scope := NewScope(interp.Global)
+	interp.hoist(prog.Body, scope)
+	for i, stmt := range prog.Body {
+		if err := interp.execStmt(stmt, scope); err != nil {
+			return scope, fmt.Errorf("stmt[%d] (%T): %w", i, stmt, err)
+		}
+	}
+	return scope, nil
+}
+
 // RunInScope executes already-parsed statements in a given scope (for recursive calls)
 func (interp *Interpreter) hoistAndRun(stmts []ast.Statement, scope *Scope) error {
 	// Hoist var declarations and function declarations first (JS semantics)
@@ -161,7 +181,18 @@ func (interp *Interpreter) makeFunction(fn *ast.FunctionLiteral, closure *Scope)
 	if fn.Name != nil {
 		name = fn.Name.Name.String()
 	}
-	return &Function{Name: name, Params: params, Body: fn.Body, Closure: closure}
+	fnClosure := closure
+	if name != "" {
+		// Named function expressions can reference themselves by name from
+		// inside their own body (e.g. `var YZ = function h9(...){ ... h9(...) }`).
+		// Bind the name in a thin scope wrapping the definition closure.
+		fnClosure = NewScope(closure)
+	}
+	f := &Function{Name: name, Params: params, Body: fn.Body, Closure: fnClosure}
+	if name != "" {
+		fnClosure.Declare(name, f)
+	}
+	return f
 }
 
 // execStmt executes a single statement in the given scope
